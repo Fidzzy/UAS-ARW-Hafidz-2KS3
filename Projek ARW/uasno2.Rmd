@@ -1,0 +1,301 @@
+---
+title: "No 2 UAS ARW"
+author: "Muhammad Hafidz Ar Rasyid Hutagalung"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+#Studi Kasus 2: Analisis Hubungan Inflasi, Suku Bunga dan Kurs Rupiah (VAR/VECM) 
+# Muhammad Hafidz Ar Rasyid Hutagalung
+# 222413683
+# 2KS3
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(tseries)   # adf.test, pp.test
+library(urca)      # ur.df, ur.pp, ur.kpss, ca.jo
+library(vars)      # VARselect, VAR, irf, fevd, stability
+library(lmtest)    # diagnostik tambahan
+library(zoo)       # yearmon
+
+set.seed(123)
+
+data <- read_excel("D:/Tugas/S4/ARW/dataUASno2.xlsx")
+
+data <- data %>%
+  mutate(
+    bulan   = as.Date(paste0(bulan, "-01")),
+    ln_kurs = log(kursrp)          # log natural, bukan log10
+  ) %>%
+  arrange(bulan)
+
+# Cek struktur & kualitas data
+str(data)
+summary(data)
+colSums(is.na(data))
+sum(duplicated(data$bulan))
+nrow(data)                         
+
+# Objek time series
+data_ts <- ts(data[, c("inflasi", "birate", "ln_kurs")],
+              start = c(2011, 1), frequency = 12)
+
+# Stats deskriptif
+stat_desc <- data %>%
+  summarise(
+    across(c(inflasi, birate, ln_kurs),
+           list(mean = mean, sd = sd, min = min, max = max),
+           .names = "{.col}_{.fn}")
+  )
+print(stat_desc)
+
+# Visualisasi
+plot_series <- function(y, title, ylab, color = "steelblue") {
+  ggplot(data.frame(waktu = as.numeric(time(y)), nilai = as.numeric(y)),
+         aes(waktu, nilai)) +
+    geom_line(color = color) +
+    theme_minimal() +
+    labs(title = title, x = "Tahun", y = ylab)
+}
+
+p1 <- plot_series(data_ts[, "inflasi"], "Inflasi Bulanan (%)", "Inflasi")
+p2 <- plot_series(data_ts[, "birate"],  "BI Rate (%)",          "BI Rate", "firebrick")
+p3 <- plot_series(data_ts[, "ln_kurs"], "Ln Kurs Rp/USD",       "ln(Kurs)", "darkgreen")
+
+print(p1); print(p2); print(p3)
+
+# Uji Stasioneritas: ADF, PP, KPSS
+# Fungsi bantu ADF 3 tipe 
+uji_adf <- function(x, nama) {
+  none  <- ur.df(x, type = "none",  selectlags = "AIC")
+  drift <- ur.df(x, type = "drift", selectlags = "AIC")
+  trend <- ur.df(x, type = "trend", selectlags = "AIC")
+  cat("\n=== ADF:", nama, "===\n")
+  cat(sprintf("none : stat = %7.4f | CV5%% = %7.4f\n",
+              none@teststat[1],  none@cval[1, 2]))
+  cat(sprintf("drift: stat = %7.4f | CV5%% = %7.4f\n",
+              drift@teststat[1], drift@cval[1, 2]))
+  cat(sprintf("trend: stat = %7.4f | CV5%% = %7.4f\n",
+              trend@teststat[1], trend@cval[1, 2]))
+  invisible(list(none = none, drift = drift, trend = trend))
+}
+
+#Fungsi bantu PP + KPSS 
+uji_pp_kpss <- function(x, nama) {
+  pp   <- ur.pp(x,   type = "Z-tau", model = "constant", lags = "short")
+  kpss <- ur.kpss(x, type = "mu",    lags = "short")
+  cat("\n=== PP & KPSS:", nama, "===\n")
+  cat(sprintf("PP  : stat = %7.4f | CV5%% = %7.4f\n",
+              pp@teststat[1],  pp@cval[1, 2]))
+  cat(sprintf("KPSS: stat = %7.4f | CV5%% = %7.4f\n",
+              kpss@teststat[1], kpss@cval[1, 2]))
+  invisible(list(pp = pp, kpss = kpss))
+}
+
+# Level
+adf_inf_lvl   <- uji_adf(data$inflasi, "Inflasi (level)")
+adf_bir_lvl   <- uji_adf(data$birate,  "BI Rate (level)")
+adf_lnk_lvl   <- uji_adf(data$ln_kurs, "ln Kurs (level)")
+
+pp_kpss_inf_lvl <- uji_pp_kpss(data$inflasi, "Inflasi (level)")
+pp_kpss_bir_lvl <- uji_pp_kpss(data$birate,  "BI Rate (level)")
+pp_kpss_lnk_lvl <- uji_pp_kpss(data$ln_kurs, "ln Kurs (level)")
+
+# First difference
+d_inflasi <- diff(data$inflasi)
+d_birate  <- diff(data$birate)
+d_lnkurs  <- diff(data$ln_kurs)
+
+adf_inf_diff <- uji_adf(d_inflasi, "D.Inflasi")
+adf_bir_diff <- uji_adf(d_birate,  "D.BI Rate")
+adf_lnk_diff <- uji_adf(d_lnkurs,  "D.ln Kurs")
+
+pp_kpss_inf_diff <- uji_pp_kpss(d_inflasi, "D.Inflasi")
+pp_kpss_bir_diff <- uji_pp_kpss(d_birate,  "D.BI Rate")
+pp_kpss_lnk_diff <- uji_pp_kpss(d_lnkurs,  "D.ln Kurs")
+
+
+# Uji Kointegrasi Johansen (BI Rate & ln Kurs)
+I1_data <- data %>% dplyr::select(birate, ln_kurs)
+
+# Tentukan lag optimal untuk Johansen
+lag_opt_I1 <- VARselect(I1_data, lag.max = 12, type = "const")
+print(lag_opt_I1$selection)
+K_joh <- as.numeric(lag_opt_I1$selection["AIC(n)"])
+
+# Trace & Eigen (robustness check)
+joh_trace <- ca.jo(I1_data, type = "trace", ecdet = "const",
+                   K = K_joh, spec = "transitory")
+joh_eigen <- ca.jo(I1_data, type = "eigen", ecdet = "const",
+                   K = K_joh, spec = "transitory")
+
+summary(joh_trace)
+summary(joh_eigen)
+
+# Membentuk Dataset untuk VAR (3 variabel)
+var_dataset <- data.frame(
+  bulan    = data$bulan[-1],
+  inflasi  = data$inflasi[-1],   # I(0)
+  d_birate = d_birate,           # I(1) -> diff
+  d_lnkurs = d_lnkurs            # I(1) -> diff
+)
+
+Y_var <- var_dataset %>% dplyr::select(inflasi, d_birate, d_lnkurs)
+
+# Penentuan Lag Optimal VAR
+lag_select <- VARselect(Y_var, lag.max = 12, type = "const")
+print(lag_select$selection)
+print(lag_select$criteria)
+p_opt <- as.numeric(lag_select$selection["AIC(n)"])
+cat("Lag optimal (AIC):", p_opt, "\n")
+
+# Estimasi Model VAR
+var_model <- VAR(Y_var, p = p_opt, type = "const")
+summary(var_model)
+
+# Uji Stabilitas
+roots_val <- roots(var_model)
+cat("Modulus Roots:\n"); print(Mod(roots_val))
+cat("Max modulus:", max(Mod(roots_val)), "(harus < 1)\n")
+
+par(mar = c(5, 5, 4, 2))
+plot(stability(var_model))
+
+# Diagnostik Residual
+serial_test    <- serial.test(var_model, lags.pt = 12, type = "PT.asymptotic")
+normality_test <- normality.test(var_model, multivariate.only = TRUE)
+arch_test      <- vars::arch.test(var_model, lags.multi = 12, multivariate.only = TRUE)
+
+print(serial_test)
+print(normality_test)
+print(arch_test)
+
+# Cttn: Jika normalitas ditolak (umum pada data keuangan),
+# IRF & FEVD tetap valid selama:
+#   - tidak ada autokorelasi residual (serial test p > 0.05)
+#   - model stabil (semua root < 1)
+# Non-normalitas hanya memengaruhi inferensi koefisien VAR (uji-t),
+# bukan IRF/FEVD yang berbasis simulasi bootstrap.
+
+# Impulse Response Function (IRF)
+buat_irf <- function(model, impulse_var, response_var, n_ahead = 24) {
+  res <- irf(model, impulse = impulse_var, response = response_var,
+             n.ahead = n_ahead, ortho = TRUE, boot = TRUE,
+             runs = 1000, ci = 0.95)
+  plot(res, main = paste("IRF:", impulse_var, "->", response_var))
+  return(res)
+}
+
+irf_bi_inf   <- buat_irf(var_model, "d_birate", "inflasi")
+irf_lnk_inf  <- buat_irf(var_model, "d_lnkurs", "inflasi")
+irf_inf_bi   <- buat_irf(var_model, "inflasi",  "d_birate")
+irf_inf_lnk  <- buat_irf(var_model, "inflasi",  "d_lnkurs")
+irf_bi_lnk   <- buat_irf(var_model, "d_birate", "d_lnkurs")
+irf_lnk_bi   <- buat_irf(var_model, "d_lnkurs", "d_birate")
+
+# --- Tabel numerik IRF ---
+tabel_irf <- function(res_irf, impulse_var, response_var) {
+  data.frame(
+    Periode  = 0:24,
+    Response = as.numeric(res_irf$irf[[impulse_var]][, response_var]),
+    Lower    = as.numeric(res_irf$Lower[[impulse_var]][, response_var]),
+    Upper    = as.numeric(res_irf$Upper[[impulse_var]][, response_var])
+  )
+}
+
+tabel_irf_bi_inf  <- tabel_irf(irf_bi_inf,  "d_birate", "inflasi")
+tabel_irf_lnk_inf <- tabel_irf(irf_lnk_inf, "d_lnkurs", "inflasi")
+tabel_irf_inf_bi  <- tabel_irf(irf_inf_bi,  "inflasi",  "d_birate")
+tabel_irf_inf_lnk <- tabel_irf(irf_inf_lnk, "inflasi",  "d_lnkurs")
+
+cat("\n--- IRF: Shock BI Rate -> Inflasi ---\n");  print(head(tabel_irf_bi_inf, 10))
+cat("\n--- IRF: Shock Kurs -> Inflasi ---\n");     print(head(tabel_irf_lnk_inf, 10))
+cat("\n--- IRF: Shock Inflasi -> BI Rate ---\n");  print(head(tabel_irf_inf_bi, 10))
+cat("\n--- IRF: Shock Inflasi -> Kurs ---\n");     print(head(tabel_irf_inf_lnk, 10))
+
+# Forecast Error Variance Decomposition (FEVD)
+fevd_result <- fevd(var_model, n.ahead = 24)
+
+rapikan_fevd <- function(mat, target) {
+  df <- as.data.frame(mat)
+  colnames(df) <- c("shock_inflasi", "shock_birate", "shock_lnkurs")
+  df$periode <- 1:nrow(df)
+  df$target  <- target
+  df[, c("target", "periode",
+         "shock_inflasi", "shock_birate", "shock_lnkurs")]
+}
+
+fevd_inf <- rapikan_fevd(fevd_result$inflasi,      "Inflasi")
+fevd_bi  <- rapikan_fevd(fevd_result$d_birate,     "D.BI Rate")
+fevd_lnk <- rapikan_fevd(fevd_result$d_lnkurs,     "D.ln Kurs")
+
+cat("\n--- FEVD Inflasi ---\n");  print(head(fevd_inf, 10))
+cat("\n--- FEVD BI Rate ---\n");  print(head(fevd_bi, 10))
+cat("\n--- FEVD ln Kurs ---\n");  print(head(fevd_lnk, 10))
+
+
+plot(fevd_result)
+
+
+cat("LAPORAN ANALISIS VAR - INFLASI, BI RATE, KURS\n")
+cat("============================================================\n\n")
+
+cat("=== 1. STATISTIK DESKRIPTIF ===\n")
+print(stat_desc)
+cat("\n=== 2. ADF LEVEL ===\n")
+print(summary(adf_inf_lvl$drift))
+print(summary(adf_bir_lvl$drift))
+print(summary(adf_lnk_lvl$drift))
+cat("\n=== 3. ADF FIRST DIFFERENCE ===\n")
+print(summary(adf_bir_diff$drift))
+print(summary(adf_lnk_diff$drift))
+cat("\n=== 4. PP & KPSS ===\n")
+print(summary(pp_kpss_bir_diff$pp))
+print(summary(pp_kpss_bir_diff$kpss))
+print(summary(pp_kpss_lnk_diff$pp))
+print(summary(pp_kpss_lnk_diff$kpss))
+cat("\n=== 5. JOHANSEN (TRACE) ===\n")
+print(summary(joh_trace))
+cat("\n=== 6. JOHANSEN (EIGEN) ===\n")
+print(summary(joh_eigen))
+cat("\n=== 7. LAG OPTIMAL ===\n")            
+print(lag_select$selection)
+cat("\n=== 8. ESTIMASI VAR ===\n")
+print(summary(var_model))
+cat("\n=== 9. STABILITAS ===\n")
+print(Mod(roots_val))
+cat("\n=== 10. DIAGNOSTIK ===\n")
+print(serial_test)
+print(normality_test)
+print(arch_test)
+cat("\n=== 11. IRF: BI Rate -> Inflasi ===\n") 
+print(tabel_irf_bi_inf)
+cat("\n=== 12. IRF: Kurs -> Inflasi ===\n")
+print(tabel_irf_lnk_inf)
+cat("\n=== 13. IRF: Inflasi -> BI Rate ===\n")
+print(tabel_irf_inf_bi)
+cat("\n=== 14. IRF: Inflasi -> Kurs ===\n")
+print(tabel_irf_inf_lnk)
+cat("\n=== 15. FEVD Inflasi ===\n")
+print(fevd_inf)
+cat("\n=== 16. FEVD BI Rate ===\n")
+print(fevd_bi)
+cat("\n=== 17. FEVD ln Kurs ===\n")
+print(fevd_lnk)
+
+
+
+```

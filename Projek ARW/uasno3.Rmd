@@ -1,0 +1,351 @@
+---
+title: "No 3 UAS ARW"
+author: "Muhammad Hafidz Ar Rasyid Hutagalung"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+# Studi Kasus 3: ECM Konsumsi Rumah Tangga dan PDB
+# Muhammad Hafidz Ar Rasyid Hutagalung
+# 222413683
+# 2KS3
+
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(tseries)
+library(urca)
+library(lmtest)
+library(broom)
+library(zoo)
+
+
+data <- read_excel("D:/Tugas/S4/ARW/soalUASno3.xlsx")
+
+head(data)
+str(data)
+
+# Tanda "-" diubah menjadi NA
+data <- data %>%
+  mutate(
+    konsum = as.numeric(ifelse(konsum == "-", NA, konsum)),
+    pdb    = as.numeric(ifelse(pdb == "-", NA, pdb))
+  ) %>%
+  filter(
+    !is.na(konsum),
+    !is.na(pdb)
+  )
+
+# Cek jumlah observasi
+nrow(data)
+
+# Cek periode
+head(data)
+tail(data)
+
+
+# Transformasi log
+data <- data %>%
+  mutate(
+    lcons = log(konsum),
+    lpdb  = log(pdb)
+  )
+summary(data)
+
+# Visualisasi
+ggplot(data, aes(x = q, y = lcons, group = 1)) +
+  geom_line() +
+  labs(
+    title = "Log Konsumsi Rumah Tangga",
+    x = "Periode",
+    y = "ln(Konsumsi)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+ggplot(data, aes(x = q, y = lpdb, group = 1)) +
+  geom_line() +
+  labs(
+    title = "Log PDB",
+    x = "Periode",
+    y = "ln(PDB)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+# Uji AF
+library(urca)
+# Level
+adf_lcons_none <- ur.df(
+  data$lcons,
+  type = "none",
+  selectlags = "AIC"
+)
+
+adf_lcons_drift <- ur.df(
+  data$lcons,
+  type = "drift",
+  selectlags = "AIC"
+)
+
+adf_lcons_trend <- ur.df(
+  data$lcons,
+  type = "trend",
+  selectlags = "AIC"
+)
+
+adf_lpdb_none <- ur.df(
+  data$lpdb,
+  type = "none",
+  selectlags = "AIC"
+)
+
+adf_lpdb_drift <- ur.df(
+  data$lpdb,
+  type = "drift",
+  selectlags = "AIC"
+)
+
+adf_lpdb_trend <- ur.df(
+  data$lpdb,
+  type = "trend",
+  selectlags = "AIC"
+)
+
+summary(adf_lcons_none)
+summary(adf_lpdb_none)
+summary(adf_lcons_drift)
+summary(adf_lpdb_drift)
+summary(adf_lcons_trend)
+summary(adf_lpdb_drift)
+
+
+# First Diff
+data <- data %>%
+  mutate(
+    dlcons = c(NA, diff(lcons)),
+    dlpdb  = c(NA, diff(lpdb))
+  )
+
+# Cek apakah kolom sudah terbentuk
+names(data)
+
+# Lihat beberapa baris
+head(data)
+
+adf_dlcons_none <- ur.df(
+  na.omit(data$dlcons),
+  type = "none",
+  selectlags = "AIC"
+)
+
+adf_dlpdb_none <- ur.df(
+  na.omit(data$dlpdb),
+  type = "none",
+  selectlags = "AIC"
+)
+
+adf_dlcons_drift <- ur.df(
+  na.omit(data$dlcons),
+  type = "drift",
+  selectlags = "AIC"
+)
+
+adf_dlpdb_drift <- ur.df(
+  na.omit(data$dlpdb),
+  type = "drift",
+  selectlags = "AIC"
+)
+
+adf_dlcons_trend <- ur.df(
+  na.omit(data$dlcons),
+  type = "trend",
+  selectlags = "AIC"
+)
+
+adf_dlpdb_trend<- ur.df(
+  na.omit(data$dlpdb),
+  type = "trend",
+  selectlags = "AIC"
+)
+
+summary(adf_dlcons_none)
+summary(adf_dlpdb_none)
+summary(adf_dlcons_drift)
+summary(adf_dlpdb_drift)
+summary(adf_dlcons_trend)
+summary(adf_dlpdb_trend)
+
+
+# Regresi Jangka Panjang
+long_run <- lm(
+  lcons ~ lpdb,
+  data = data
+)
+
+summary(long_run)
+
+# Tabel koefisien
+tidy(long_run)
+
+
+# Bentuk Residual Jangka Panjang
+data <- data %>%
+  mutate(
+    ect = residuals(long_run)
+  )
+
+
+# Uji Kointegrasi Engle-Granger
+
+# Residual persamaan kointegrasi diuji tanpa konstanta
+# karena konstanta sudah terdapat pada persamaan jangka panjang.
+
+eg_test <- ur.df(
+  na.omit(data$ect),
+  type = "none",
+  selectlags = "AIC"
+)
+
+summary(eg_test)
+
+
+# Jika residual stasioner: -> terdapat kointegrasi
+
+
+# Bentuk ECT(-1)
+data <- data %>%
+  mutate(
+    ect_lag1 = lag(ect, 1)
+  )
+
+
+# Data ECM
+ecm_data <- data %>%
+  filter(
+    !is.na(dlcons),
+    !is.na(dlpdb),
+    !is.na(ect_lag1)
+  )
+
+
+# Estimasi ECM
+ecm_model <- lm(
+  dlcons ~ dlpdb + ect_lag1,
+  data = ecm_data
+)
+
+summary(ecm_model)
+
+# Tabel hasil ECM
+tidy(ecm_model)
+
+
+# Diagnostik Autokorelasi
+bg_test <- bgtest(
+  ecm_model,
+  order = 1
+)
+
+bg_test
+
+
+# Diagnostik Heterokedastitas
+bp_test <- bptest(
+  ecm_model
+)
+
+bp_test
+
+
+# Diagnostik Normalitas
+res_ecm <- residuals(ecm_model)
+
+jb_test <- jarque.bera.test(
+  res_ecm
+)
+
+jb_test
+
+
+# Grafik Residual
+plot(
+  res_ecm,
+  type = "l",
+  main = "Residual Error Correction Model",
+  xlab = "Observasi",
+  ylab = "Residual"
+)
+
+abline(h = 0, lty = 2)
+
+
+# Ringkasan Hasil
+
+cat("ADF LEVEL\n")
+cat("========================================\n")
+print(adf_lcons_none)
+print(adf_lcons_drift)
+print(adf_lcons_trend)
+
+print(adf_lpdb_none)
+print(adf_lpdb_drift)
+print(adf_lpdb_trend)
+
+
+cat("\n========================================\n")
+cat("ADF FIRST DIFFERENCE\n")
+cat("========================================\n")
+print(adf_dlcons_none)
+print(adf_dlcons_drift)
+print(adf_dlcons_trend)
+
+print(adf_dlpdb_none)
+print(adf_dlpdb_drift)
+print(adf_dlpdb_trend)
+
+
+cat("\n========================================\n")
+cat("REGRESI JANGKA PANJANG\n")
+cat("========================================\n")
+print(summary(long_run))
+
+
+cat("\n========================================\n")
+cat("ENGLE-GRANGER RESIDUAL TEST\n")
+cat("========================================\n")
+print(summary(eg_test))
+
+
+cat("\n========================================\n")
+cat("ERROR CORRECTION MODEL\n")
+cat("========================================\n")
+print(summary(ecm_model))
+
+
+cat("\n========================================\n")
+cat("DIAGNOSTIK\n")
+cat("========================================\n")
+
+cat("\nBreusch-Godfrey:\n")
+print(bg_test)
+
+cat("\nBreusch-Pagan:\n")
+print(bp_test)
+
+cat("\nJarque-Bera:\n")
+print(jb_test)
+```
